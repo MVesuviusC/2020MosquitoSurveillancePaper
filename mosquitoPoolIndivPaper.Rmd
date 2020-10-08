@@ -1,0 +1,856 @@
+---
+title: "mosquitoPoolIndivPaper"
+output: knitrBootstrap::bootstrap_document
+---
+
+
+```{r setup, cache = FALSE, include = FALSE}
+opts_chunk$set(cache = TRUE, fig.height = 10, fig.width = 20)
+```
+
+# Testing mosquito samples for parasites 
+
+African mosquitos
+Hiseq:
+~/SerreDLab-3/raw_reads/2018-08-08_UMB/parsed/DNA*R1.fastq.gz - 301bp PE HiSeq
+~/SerreDLab-3/raw_reads/2018-04-23_UMB_HNB/parsedMVC/DNA*R1.fastq.gz - 251bp PE MiSeq
+
+
+Traps from DOA
+~/SerreDLab-3/raw_reads/2018-08-08_UMB/parsed/DB*R1.fastq.gz - 301bp PE HiSeq
+
+Cambodian mosquitos 
+~/SerreDLab-3/raw_reads/2017-09-12_UMB/parsedFastqFiles/[FS]*R1.fastq.gz  - 251 bp PE HiSeq
+
+
+
+## Load libraries
+```{r libraries, cache = FALSE}
+library(ggplot2)
+library(tidyverse)
+#library(reshape2)
+#library(plyr)
+library(primerTree)
+library(ape)
+theme_set(theme_bw())
+theme_update(plot.title = element_text(hjust = 0.5))
+```
+
+## Setup
+```{bash mkdirs, eval = FALSE}
+mkdir output2
+mkdir misc
+mkdir makingBarcodeKeyFile
+mkdir output2/counts
+mkdir output2/trimmed
+mkdir output2/noDimers
+mkdir output2/noDimers/paired
+mkdir output2/fastqc
+mkdir output2/primersRemoved
+mkdir output2/pandaseqd
+mkdir output2/primersRemoved/noShort
+mkdir output2/blast
+mkdir output2/blast/mergedRaw
+mkdir output2/blast/mothured
+mkdir output2/blast/inputFiles
+mkdir output2/blast/inputFiles/emptyFiles
+mkdir output2/blast/output
+mkdir output2/blast/output/taxonomy
+mkdir output2/blast/output/onTarget
+mkdir output2/blast/output/withSeqLen
+mkdir output2/primerTree
+mkdir output2/primerTree/seqs
+mkdir output2/primerTree/taxonomy
+
+```
+
+## Parse raw fastq files
+### Prepare sample barcoding file for fastq parsing
+```{r, echo = FALSE, cache = FALSE}
+read_chunk('~/SerreDLab-3/cannonm3/scripts/combine4x96wellsTo384withBarcodes.pl', labels = '96to384Script')
+```
+```{perl 96to384Script, eval = FALSE, cache = FALSE}
+```
+```{bash makeParseKey, eval = FALSE}
+perl ~/SerreDLab-3/cannonm3/scripts/combine4x96wellsTo384withBarcodes.pl \
+  --P1 makingBarcodeKeyFile/MVCsamplePlate.txt \
+  --P2 makingBarcodeKeyFile/CPsamplePlate.txt \
+  --P3 makingBarcodeKeyFile/DBsamplePlate.txt \
+  --P4 makingBarcodeKeyFile/emptyPlate.txt \
+  --bar makingBarcodeKeyFile/384Plate1barcodes.txt \
+  --plateMap makingBarcodeKeyFile/MCDEplateMap.txt \
+   > makingBarcodeKeyFile/MCDEPlateSampleKey.txt
+
+cat makingBarcodeKeyFile/MCDEPlateSampleKey.txt makingBarcodeKeyFile/Haikel_HiSeq_BarcodeKey.txt > makingBarcodeKeyFile/allSamplesKey.txt
+```
+
+### Parse out HiSeq and MiSeq fastq files
+```{r, echo = FALSE, cache = FALSE}
+read_chunk('~/SerreDLab-3/cannonm3/scripts/fastqTools/parseFastqBarcodesDualIndexTemp.pl', labels = 'parseFastqScript')
+```
+```{perl parseFastqScript, eval = FALSE, cache = FALSE}
+```
+```{bash parseRawFastq1, eval = FALSE}
+path=~/SerreDLab-3/raw_reads/2018-08-08_UMB
+
+nameStub=AHBGM_20180803_7001153F_IL100105657_S1_L001
+
+perl ~/SerreDLab-3/cannonm3/scripts/fastqTools/parseFastqBarcodesDualIndexTemp.pl \
+    -I7  ${path}/${nameStub}_I1.fastq.gz \
+    -I5  ${path}/${nameStub}_I2.fastq.gz \
+    -R1  ${path}/${nameStub}_R1.fastq.gz \
+    -R2  ${path}/${nameStub}_R2.fastq.gz \
+    --keyFile makingBarcodeKeyFile/allSamplesKey.txt \
+    --errors 0 \
+    --outDir ${path}/parsed/
+            
+parallel -j 5 'gzip {}' ::: ${path}/parsed/*R[12].fastq
+```
+
+```{bash parseMosq, eval = FALSE}
+path=~/SerreDLab-3/raw_reads/2018-04-23_UMB_HNB
+
+nameStub=AHBGM_20180417_M00708_IL100101409_S1_L001
+
+perl ~/SerreDLab-3/cannonm3/scripts/fastqTools/parseFastqBarcodesDualIndexTemp.pl \
+    -I7  ${path}/${nameStub}_RI1.fastq.gz \
+    -I5  ${path}/${nameStub}_RI2.fastq.gz \
+    -R1  ${path}/${nameStub}_R1.fastq.gz \
+    -R2  ${path}/${nameStub}_R2.fastq.gz \
+    -v \
+    --keyFile makingBarcodeKeyFile/HB_Mosq_screen_Barcode_key.txt \
+    --errors 0 \
+    --outDir ${path}/parsedMVC/
+            
+parallel -j 5 'gzip {}' ::: ${path}/parsedMVC/*R[12].fastq
+```
+
+```{r parseRawFastq2, engine = 'bash', eval = FALSE}
+path=~/SerreDLab-3/raw_reads/2017-09-12_UMB
+
+nameStub=MCHB1_20170908_M01994_IL100092583_NoIndex_L001
+
+perl ~/SerreDLab-3/cannonm3/scripts/fastqTools/parseFastqBarcodesDualIndexTemp.pl \
+    -I7  ${path}/${nameStub}_R2.fastq.gz \
+    -I5  ${path}/${nameStub}_R3.fastq.gz \
+    -R1  ${path}/${nameStub}_R1.fastq.gz \
+    -R2  ${path}/${nameStub}_R4.fastq.gz \
+    --keyFile sampleKey.txt \
+    --verbose \
+    --errors 0
+
+parallel -j 5 'gzip {}' ::: parsedFastqFiles/*.fastq
+```
+
+### Combine HiSeq and MiSeq runs by sample
+```{bash combineHiseqMiseq, eval = FALSE}
+for file in ~/SerreDLab-3/raw_reads/2018-08-08_UMB/parsed/DNA*.fastq.gz
+do
+  base=${file##*/}
+  zcat ~/SerreDLab-3/raw_reads/2018-08-08_UMB/parsed/${base} ~/SerreDLab-3/raw_reads/2018-04-23_UMB_HNB/parsedMVC/${base} | gzip > data/${base}
+done
+```
+
+### Make a list of files from various folders
+```{bash gatherFiles, eval = FALSE}
+ls ~/SerreDLab-3/raw_reads/2017-09-12_UMB/parsedFastqFiles/[FS]*R1.fastq.gz | grep -v "Beam\|BLSA\|DOA\|GA\|GM\|HMB\|KSG\|MTM\|RT1\|TAI\|Tic\|Repeat\|Dug\|Vath\|DVC\|GT" > misc/inputFiles.txt
+
+ls ~/SerreDLab-3/raw_reads/2018-08-08_UMB/parsed/DB*R1.fastq.gz >> misc/inputFiles.txt
+
+ls data/DNA*R1.fastq.gz >> misc/inputFiles.txt
+```
+
+
+## Prepare the data to BLAST and filter out bad seqs
+
+### Run pandaSeq to overlap the reads
+```{bash showPandaSeq, comment = '', cache = FALSE}
+cat pandaSeq2.sh 
+```
+```{bash pandaseq, eval = FALSE}
+qsub pandaSeq2.sh 
+```
+
+### Cut primer sequences off of the reads and put primer name in fastq header  
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/CutOffSequenceFromFastqV3.pl', labels = 'trimPrimers')
+```
+```{perl trimPrimers, eval = FALSE, cache = FALSE}
+```
+```{bash parseReadPrimers, eval = FALSE}
+parallel -j 5 'label={}; label=${label##*/}; label=${label%_.fastq.gz}; perl ~/SerreDLab-2/cannonm3/scripts/CutOffSequenceFromFastqV3.pl --matchLen 15 --primers misc/primerKey.txt --fastq {} --label ${label}  | gzip > output2/primersRemoved/${label}.fastq.gz' ::: output2/pandaseqd/*fastq.gz  
+```
+
+### Filter out the short sequences
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/filterShortFastq.pl', labels = 'filterShort')
+```
+```{perl filterShort, eval = FALSE, cache = FALSE}
+```
+```{bash filterShortFastq, eval = FALSE}
+parallel -j 5 'zcat {} | perl ~/SerreDLab-2/cannonm3/scripts/filterShortFastq.pl 100 | gzip > output2/primersRemoved/noShort/{/}' ::: output2/primersRemoved/*fastq.gz   
+```
+
+### Put all the fasta files together into files by primer
+Add the sample name to the file and combine.
+```{bash blast_format, eval = FALSE}
+for primer in \
+	Apicomp18S_365-613 \
+	Eimeriorina18S_302-730 \
+	FlaviallS_FlaviallAS2 \
+	Kineto_18S4 \
+	Microsporidia_18S \
+	Parab18S_288-654 \
+	Plasmo18S_883-1126 \
+	Platy_18S3 \
+	Spirur18S_1435-1858 \
+	Spirurida_18S2 \
+	Tricho_18S2
+do
+  zcat output2/primersRemoved/noShort/*.fastq.gz | grep -A 1 $primer \
+	| grep -v "^--" | perl -pe 's/\t/:/' | \
+	perl -pe 's/\@HWI-M01/>HWI-M01/' | \
+	perl -pe 's/\@M00708/>M00708/' | \
+	perl -pe 's/\@70011/>70011/' \
+	> output2/blast/mergedRaw/merged_products_${primer}.fa &
+done
+```
+
+### Get unique sequences
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/mattsMothur.pl', labels = 'MattsMother')
+```
+```{perl MattsMother, eval = FALSE, cache = FALSE}
+```
+```{r mothurMayI, engine = 'bash', eval = FALSE}
+parallel -j 5 'perl ~/SerreDLab-2/cannonm3/scripts/mattsMothur.pl {}' ::: output2/blast/mergedRaw/*.fa
+```
+
+```{r gzipMothur, engine = 'bash', eval = FALSE}
+parallel -j 5 'gzip -f {}' ::: output2/blast/mergedRaw/merged_products*.names
+parallel -j 5 'gzip -f {}' ::: output2/blast/mergedRaw/merged_products*.unique.fasta
+parallel -j 5 'gzip -f {}' ::: output2/blast/mergedRaw/merged_products*.fa
+```
+
+### Filter out any sequences seen less than 10 times
+```{r, echo = F, cache = TRUE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/filterMothurByCountV2.pl', labels = 'filterMothurScript')
+```
+```{perl filterMothurScript, eval = FALSE, cache = FALSE}
+```
+```{r filterMothur, engine = 'bash', eval = FALSE}
+parallel -j 5 'name={}; base=${name%names.gz}; perl ~/SerreDLab-2/cannonm3/scripts/filterMothurByCountV2.pl --cutoff 10 --names {} --fasta ${base}unique.fasta.gz --out output2/blast/inputFiles/${base##*/}' ::: output2/blast/mergedRaw/merged_products*.names.gz
+
+#writes out two files: output2/blast/inputFiles/merged_products*Filtered.names         
+#                      output2/blast/inputFiles/merged_products*Unique.filtered.fa
+```
+
+
+## Blast
+The filter environmental samples option on online blast using the Entrez query
+`all [filter] NOT(environmental samples[organism] OR metagenomes[orgn] OR txid32644[orgn])` 
+to remove uncultured samples.  In order to reproduce this I
+ downloaded all the gi's for the query `all [filter] NOT(environmental samples[organism] OR metagenomes[orgn] OR txid32644[orgn])` 
+using a browser and put them in `data/uncultured_samples.gi.gz`. The gi's are then filtered out using the -negative_gilist option.
+
+```{bash showBlast, comment = '', cache = FALSE}
+cat blast3.sh
+```
+```{bash blast, eval = FALSE}
+qsub blast3.sh
+```
+
+## Parse out BLAST results
+
+### Parse out blast results using the .names file
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/parseBlastWithNameFileSummaryStats6.2.pl', labels = 'parseBlast')
+```
+```{perl parseBlast, eval = FALSE, cache = FALSE}
+```
+```{bash parseBlastWithBlastStats, eval = FALSE}
+fileList=(output2/blast/output/*.blastResults2.txt.gz)
+
+for i in "${!fileList[@]}"
+do 
+  fileList[$i]="${fileList[$i]##*/merged_products_}"
+  fileList[$i]="${fileList[$i]%.blastResults2.txt.gz}"
+done
+
+parallel -j 5 'perl ~/SerreDLab-2/cannonm3/scripts/parseBlastWithNameFileSummaryStats6.2.pl output2/blast/inputFiles/merged_products_{}.Filtered.names output2/blast/inputFiles/merged_products_{}.Unique.filtered.fa output2/blast/output/merged_products_{}.blastResults2.txt.gz | gzip > output2/blast/output/blastGICountsStats_{}.txt.gz' ::: ${fileList[@]}
+
+#make up list of unique gis
+parallel -j 5 'zcat output2/blast/output/blastGICountsStats_{}.txt.gz | cut -f 3 | sort | uniq | grep -v ^gi$ > output2/blast/output/taxonomy/gis_{}.txt' ::: ${fileList[@]}
+```
+
+### Get taxonomy using perl ripoff of Jim's primerTree get_taxonomy function
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-3/cannonm3/scripts/getTaxa/getTaxa.pl', labels = 'taxa')
+```
+```{perl taxa, eval = FALSE, cache = FALSE}
+```
+```{bash getTaxa, eval = FALSE}
+fileList=(output2/blast/output/*.blastResults2.txt.gz)
+
+for i in "${!fileList[@]}"
+do
+  fileList[$i]="${fileList[$i]##*/merged_products_}"
+  fileList[$i]="${fileList[$i]%.blastResults2.txt.gz}"
+done
+
+parallel -j 2 'perl ~/SerreDLab-3/cannonm3/scripts/getTaxa/getTaxa.pl --api 4da437af9f4a6d26e1fb51be8d57af1e1009 -q 200 --gis output2/blast/output/taxonomy/gis_{}.txt > output2/blast/output/taxonomy/blastTaxaRaw_{}.txt 2> output2/blast/output/taxonomy/{}log.txt' ::: ${fileList[@]}
+```
+
+#### Get rid of "/" in taxa names
+```{bash, fixTaxa, eval = FALSE}
+fileList=(output2/blast/output/taxonomy/blastTaxaRaw_*.txt)
+
+for i in "${!fileList[@]}"
+do
+  fileList[$i]="${fileList[$i]%.txt}"
+done
+
+parallel -j 5 'perl -pe "s/\//_/g" {}.txt > {}Fixed.txt' ::: ${fileList[@]} 
+
+```
+
+
+### Combine the GI read count data with taxa information, but include full taxonomy
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/combineFilesByFirstXColumnsOrdered.pl', labels = 'combineByCol')
+```
+```{perl combineByCol, eval = FALSE, cache = FALSE}
+```
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/uniqueFileByColumnsV1.pl', labels = 'uniqueByCol')
+```
+```{perl uniqueByCol, eval = FALSE, cache = FALSE}
+```
+```{r, echo = F, cache = FALSE}
+read_chunk('~/SerreDLab-2/cannonm3/scripts/concatenateRepeatReadHitsForBlastV2.pl', labels = 'concatRepeats')
+```
+```{perl concatRepeats, eval = FALSE, cache = FALSE}
+```
+```{bash mergeTaxaInfoSpeciesOnly, eval = FALSE}
+fileList=(output2/blast/output/*.blastResults2.txt.gz) 
+ 
+for i in "${!fileList[@]}"; do 
+  fileList[$i]="${fileList[$i]##*/merged_products_}"
+  fileList[$i]="${fileList[$i]%.blastResults2.txt.gz}"
+done 
+
+for i in "${!fileList[@]}" 
+do
+  # move gi to first column  14 cols
+  zcat output2/blast/output/blastGICountsStats_${fileList[$i]}.txt.gz | gawk -F"\t" 'BEGIN {OFS = "\t"} {print $3,$1,$2,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14}' > temp
+  
+  ###########################   Truncated Species Name
+  #combine the prior two files by gi number
+  perl ~/SerreDLab-2/cannonm3/scripts/combineFilesByFirstXColumnsOrdered.pl 1 output2/blast/output/taxonomy/blastTaxaRaw_${fileList[$i]}Fixed.txt temp | cut -f 2- > output2/blast/output/blastStatsWithTaxaOutputRedundantSpecies_${fileList[$i]}.txt 
+  
+  # keep only one hit per species
+  
+  ###  Check the four numbers
+  perl ~/SerreDLab-2/cannonm3/scripts/uniqueFileByColumnsV1.pl 1,2,3,4,14 output2/blast/output/blastStatsWithTaxaOutputRedundantSpecies_${fileList[$i]}.txt > output2/blast/output/blastStatsWithTaxaOutputUniqueSpecies_${fileList[$i]}.txt
+  
+  # concatenate duplicate hits
+  grep -v "NotFound" output2/blast/output/blastStatsWithTaxaOutputUniqueSpecies_${fileList[$i]}.txt > temp.txt
+  perl ~/SerreDLab-2/cannonm3/scripts/concatenateRepeatReadHitsForBlastV2.pl temp.txt > output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesConcatenated_${fileList[$i]}.txt
+  
+  ############################ Normal Species Name
+  #combine the prior two files by gi number
+  perl ~/SerreDLab-2/cannonm3/scripts/combineFilesByFirstXColumnsOrdered.pl 1 output2/blast/output/taxonomy/blastTaxaRaw_${fileList[$i]}Fixed.txt temp | cut -f 2- > output2/blast/output/blastStatsWithTaxaOutputRedundantSpeciesFullName_${fileList[$i]}.txt 
+
+  # keep only one hit per species
+
+  ###  Check the four numbers
+  perl ~/SerreDLab-2/cannonm3/scripts/uniqueFileByColumnsV1.pl 1,2,3,4,14 output2/blast/output/blastStatsWithTaxaOutputRedundantSpeciesFullName_${fileList[$i]}.txt > output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullName_${fileList[$i]}.txt
+  
+  # concatenate duplicate hits
+  grep -v "NotFound" output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullName_${fileList[$i]}.txt > temp.txt
+  perl ~/SerreDLab-2/cannonm3/scripts/concatenateRepeatReadHitsForBlastV2.pl temp.txt > output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenated_${fileList[$i]}.txt
+  
+done
+```
+
+### Add blasted sequence length to the output
+```{bash seqLength, eval = FALSE}
+for file in output2/blast/inputFiles/merged_products_*.Unique.filtered.fa
+do
+  base=${file##*/}
+  base=${base%.Unique.filtered.fa}
+  perl ~/SerreDLab-3/cannonm3/scripts/fastaSeqLength.pl ${file} | perl -pe 's/\|.+gz//' > output2/blast/output/withSeqLen/${base}SeqLens.txt
+done 
+```
+
+### Summarize BLAST output into more readable table
+```{r summarizeBlastOutTable, eval = FALSE}
+files <- list.files(path = "output2/blast/output/", pattern = "blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenated_.+", full.names = T )
+
+for(primer in files) {
+  baseName <- gsub(".+Concatenated_", "", primer)
+  baseName <- gsub(".txt", "", baseName)
+
+  seqLens <- read.delim(paste("output2/blast/output/withSeqLen/merged_products_", baseName, "SeqLens.txt", sep = ""), header = F, stringsAsFactors = F)
+  colnames(seqLens) <- c("blastedReadName", "seqLength")
+  
+  dataDf <- read.delim(primer, header = T, stringsAsFactors = F)
+  
+  dataDf$Sample <- gsub("\\|$", "", dataDf$X.primerSample)
+  dataDf$Sample <- gsub(".+\\|", "", dataDf$Sample)
+  
+  dataDf$Primer <- gsub("\\|.+", "", dataDf$X.primerSample)
+  
+  dataDf$identity <- gsub("\\/.+", "", dataDf$identity)
+  
+  dataDf$alignmentlength <- gsub("\\/.+", "", dataDf$alignmentlength)
+  
+  dataDf$blastedReadName <- gsub("\\|.+", "", dataDf$blastedReadName)
+  
+  dataDf <- merge(dataDf, seqLens, all.x = T)
+
+  wantedCols <- c("Primer", "Sample", "count", "identity", "alignmentlength", "species", "superkingdom", "kingdom", "phylum", "class", "order", "family", "seqLength")
+  
+  dataDf <- dataDf[, colnames(dataDf) %in% wantedCols]
+  
+  summaryDf <- dataDf %>%
+    group_by(., Primer, Sample, species, kingdom, phylum, class, order, family) %>%
+    summarize(., count = sum(count), 
+              maxIdent = max(as.numeric(identity)), 
+              maxAlignLen = max(as.numeric(alignmentlength)), 
+              minSeqLength = min(seqLength))
+  
+  write.table(summaryDf, file = paste( "output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_", baseName, ".txt", sep = ""), quote = F, sep = "\t", col.names = T, row.names = F)
+  
+}
+```
+
+
+### For Haikel's data Spirur18S_1435-1858 data, DNA_Plate_3 and DNA_Plate_4 were switched during PCR setup as noted in his lab book, need to switch back here
+
+```{bash fixP3_4, eval = FALSE}
+cp output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_Spirur18S_1435-1858.txt output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummaryOriginal_Spirur18S_1435-1858.txt
+ 
+perl -pe 's/Plate_3/Pl\@te_4/' output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummaryOriginal_Spirur18S_1435-1858.txt | perl -pe 's/Plate_4/Pl\@te_3/' | perl -pe 's/Pl\@te/Plate/' > output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_Spirur18S_1435-1858.txt
+ 
+```
+
+### Make separate files that have only on-target hits
+```{bash onTargetOnly, eval = FALSE}
+for primer in \
+  Apicomp18S_365-613 \
+  Eimeriorina18S_302-730 \
+  FlaviallS_FlaviallAS2 \
+  Kineto_18S4 \
+  Microsporidia_18S \
+  Parab18S_288-654 \
+  Plasmo18S_883-1126 \
+  Platy_18S3 \
+  Spirur18S_1435-1858 \
+  Spirurida_18S2 \
+  Tricho_18S2
+do
+  echo ${primer}
+  perl misc/filterBlastResultsByTaxa.pl \
+    --targetTaxa misc/primerTargets/${primer}.txt \
+    --blast output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_${primer}.txt \
+      > output2/blast/output/onTarget/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_${primer}.txt
+done
+```
+
+### combine all output into single files
+```{r catOutput, engine = 'bash', eval = FALSE}
+rm output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_AllPrimers.txt
+rm output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers.txt
+rm output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_AllPrimers_NewSampleNames.txt
+rm output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers_NewSampleNames.txt
+
+
+cat output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_*.txt | head -n 1 > output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_AllPrimers.txt
+ 
+cat output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_*.txt | grep -v "maxAlignLen" >> output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_AllPrimers.txt
+ 
+cat output2/blast/output/onTarget/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_*.txt | head -n 1 > output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers.txt
+  
+cat output2/blast/output/onTarget/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_*.txt | grep -v "maxAlignLen" >> output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers.txt
+```
+
+### Add info for better sample names
+```{r addInSampleInfo, eval = FALSE}
+sampleInfo <- read.delim("misc/sampleData.txt", header = F, stringsAsFactors = F)
+colnames(sampleInfo) <- c("Sample", "NewSample")
+ 
+allData <- read.delim("output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_AllPrimers.txt", header = T, stringsAsFactors = F)
+allData$Sample <- gsub(".fastq.gz", "", allData$Sample)
+allData <- merge(allData, sampleInfo)
+allData$Sample <- allData$NewSample
+allData <- allData[,-13]
+
+write.table(allData, file = "output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_AllPrimers_NewSampleNames.txt", quote = F, sep = "\t", col.names = T, row.names = F)
+  
+
+onTarget <- read.delim("output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers.txt", header = T, stringsAsFactors = F)
+onTarget$Sample <- gsub(".fastq.gz", "", onTarget$Sample)
+onTarget <- merge(onTarget, sampleInfo)
+onTarget$Sample <- onTarget$NewSample
+onTarget <- onTarget[,-13]
+
+write.table(onTarget, file = "output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers_NewSampleNames.txt", quote = F, sep = "\t", col.names = T, row.names = F)
+
+```
+
+
+## Compare cDNA to DNA results
+```{r cmpcDNA, eval = FALSE}
+fileList <- list.files('output2/blast/output/onTarget/', pattern = '^blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_.+txt')
+fileList <- fileList[grep("AllPrimers", fileList, invert = T)]
+ 
+fileList <- fileList[grep("Culic", fileList, invert = T)]
+
+dataDf <- data.frame()
+
+for(inFile in fileList) {
+  tempDf <- read.delim(paste("output2/blast/output/onTarget/", inFile, sep = ""))
+  if(nrow(tempDf) > 1) {
+    dataDf <- dataDf %>%
+      bind_rows(., tempDf)
+  }
+}
+
+dataDf <- dataDf[grepl("DB_", dataDf$Sample),]
+dataDf <- subset(dataDf, count >= 10 & maxIdent >= 70 & grepl("water", dataDf$Sample)==FALSE)
+dataDf$trap <- gsub("C", "", dataDf$Sample)
+dataDf$trap <- gsub("DB_", "", dataDf$trap)
+dataDf$trap <- gsub(".fastq.gz", "", dataDf$trap)
+dataDf$molecule <- gsub("DB_", "", dataDf$Sample)
+dataDf$molecule <- gsub("[0-9].+", "", dataDf$molecule)
+dataDf$molecule[grepl("^$", dataDf$molecule)] <- "DNA"
+dataDf$molecule[grepl("^C$", dataDf$molecule)] <- "RNA"
+  
+castDf <- reshape2::dcast(dataDf, species + trap + Primer ~ molecule, value.var = "count", fill = 0)
+
+castDf$DNApos <- castDf$DNA > 0
+castDf$RNApos <- castDf$RNA > 0
+castDf$RNAHigher <- castDf$RNA > castDf$DNA
+
+write.table(castDf, file = "cmpDnaCdnaTable.txt", quote = F, sep = "\t", col.names = T, row.names = F)
+
+meltedCast <- reshape2::melt(castDf, id = c("species", "trap", "Primer", "RNAHigher", "DNApos", "RNApos"))
+
+DnaRnaDf <- data.frame()
+
+for(primer in unique(castDf$Primer)) {
+  print(as.character(primer))
+  subDf <- subset(castDf, Primer == primer)
+  test <- as.data.frame(summary(as.factor(paste(subDf$DNApos, subDf$RNApos))))
+  colnames(test) <- primer
+  test$group <- rownames(test)
+  DnaRnaDf <- plyr::join(DnaRnaDf, test, type = "full")
+}
+
+png(filename = "cmpDnaCdna.png", width = 3000, height = 2000, res = 300)
+ggplot(meltedCast, aes(x = variable, y = value, group = paste(trap, species), colour = variable)) + 
+  geom_point() + 
+  geom_line(colour = "black") + 
+  facet_wrap(~ Primer, scales = "free_y") + 
+  theme(legend.position = "none") +
+  xlab("") +
+  ylab("Read count")
+dev.off()
+
+# ggplot(castDf, aes(x = DNA, y = RNA)) + 
+#   geom_point() + 
+#   facet_wrap(~ Primer, scales = "free") + 
+#   geom_abline(slope = 1, intercept = 0)
+# 
+# ggplot(castDf, aes(x = RNA - DNA)) + 
+#   geom_histogram(bins = 100) + 
+#   facet_wrap(~ Primer, scales = "free")
+
+
+pairedTtest <- castDf %>%
+  filter(., Primer != "Tricho_18S2") %>%
+  group_by(., Primer) %>%
+  summarize(., pvalue = t.test(DNA, RNA, paired = T)$p.value, 
+            n = length(DNA), 
+            meanRNAminusDNA = mean(RNA - DNA), 
+            medianRNAminusDNA = median(RNA - DNA))
+
+pairedTtest$adjP <- p.adjust(pairedTtest$pvalue, method = "bonferroni")
+
+
+write.table(pairedTtest, file = "cmpDnaCdnaTtests.txt", quote = F, sep = "\t", col.names = T, row.names = F)
+
+meltedCast2 <- subset(meltedCast, Primer == "Apicomp18S_365-613" |
+                        Primer == "Eimeriorina18S_302-730" |
+                        Primer == "Plasmo18S_883-1126" |
+                        Primer == "Kineto_18S4")
+meltedCast2$isTheileria <- grepl("Theileria", meltedCast2$species)
+meltedCast2$genus <- gsub(" .+", "", meltedCast2$species)
+meltedCast2$RNAHigher[grep(TRUE, meltedCast2$RNAHigher)] <- "RNA higher"
+meltedCast2$RNAHigher[grep(FALSE, meltedCast2$RNAHigher)] <- "DNA higher"
+
+
+P1 <- ggplot(subset(meltedCast2, genus == "Plasmodium"), aes(x = variable, 
+                                                             y = value, 
+                                                             group = paste(trap, species, Primer))) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~ genus + RNAHigher) + 
+  theme(legend.position = "none") +
+  xlab("") +
+  ylab("Read count")
+
+P2 <- ggplot(subset(meltedCast2, genus == "Theileria"), aes(x = variable, 
+                                                                              y = value, 
+                                                                              group = paste(trap, species, Primer))) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~ genus + RNAHigher) + 
+  theme(legend.position = "none") +
+  xlab("") +
+  ylab("Read count")
+
+P3 <- ggplot(subset(meltedCast2, genus == "Trypanosoma"), aes(x = variable, 
+                                                                              y = value, 
+                                                                              group = paste(trap, species, Primer))) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~ genus + RNAHigher) + 
+  theme(legend.position = "none") +
+  xlab("") +
+  ylab("Read count")
+
+P4 <- ggplot(subset(meltedCast2, genus == "Strigomonas"), aes(x = variable, 
+                                                                              y = value, 
+                                                                              group = paste(trap, species, Primer))) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~ genus + RNAHigher) + 
+  theme(legend.position = "none") +
+  xlab("") +
+  ylab("Read count")
+
+P5 <- ggplot(subset(meltedCast2, genus == "Crithidia"), aes(x = variable, 
+                                                                              y = value, 
+                                                                              group = paste(trap, species, Primer))) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~ genus + RNAHigher) + 
+  theme(legend.position = "none") +
+  xlab("") +
+  ylab("Read count")
+
+
+png(filename = "cmpDnaCdnaTheileriaVsPlasmo.png", width = 3000, height = 6000, res = 300)
+grid.arrange(P1, P2, P3, P4, P5, ncol = 1)
+dev.off()
+
+castDf$genus <- gsub(" .+", "", castDf$species)
+
+testDdply <- castDf %>%
+  filter(Primer != "FlaviallS_FlaviallAS2") %>%
+  group_by(., genus) %>%
+  summarize(., N = length(species), 
+            percentRNAHigher = sum(RNAHigher) / length(RNAHigher))
+
+write.table(testDdply, file = "cmpDnaCdnaPercentHigher.txt", quote = F, sep = "\t", col.names = T, row.names = F)
+
+
+```
+
+
+
+
+
+## Make trees of results
+
+### Get known sequences from NCBI
+```{r primerTreeToGetSeqs, eval = FALSE}
+primersToUse <- list.files(path = "output2/blast/output/", pattern = "^blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_.+txt")
+primersToUse <- gsub("blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_", "", primersToUse)
+primersToUse <- gsub(".txt", "", primersToUse)
+primersToUse <- primersToUse[!primersToUse %in% "AllPrimers"]
+
+primers <- read.delim("misc/primerKeyWithTarget.txt", header = F, stringsAsFactors = F)
+primers <- primers[primers$V1 %in% primersToUse,]
+
+for(i in 1:nrow(primers)) {
+  primTree <- search_primer_pair(name = primers[i, 1], 
+                                 forward = primers[i, 2], 
+                                 reverse = primers[i, 3], 
+                                 organism = primers[i, 4],
+                                 num_permutations = 100,
+                                 num_aligns = 50000, api_key = "4da437af9f4a6d26e1fb51be8d57af1e1009")
+
+  taxa <- primTree$taxonomy
+  write.table(taxa, paste("output2/primerTree/taxonomy/", primers[i, 1], ".txt", sep = ""), quote = F, sep = "\t", row.names = F, col.names = T)
+  
+  seqs <- primTree$sequence
+  write.dna(seqs, paste("output2/primerTree/seqs/", primers[i, 1], ".fasta", sep = ""), format = "fasta")
+  
+}
+```
+
+
+
+### Align known and unknown sequences
+```{bash makeTrees, eval = FALSE}
+for primer in \
+  FlaviallS_FlaviallAS2 #\
+  #Kineto_18S4 \
+  #Microsporidia_18S \
+  #Plasmo18S_883-1126
+do 
+
+# get on-target portion of blast results
+# filter results by %identity and alignmentLength
+# Put in last regex due to HWI Blast read keeping sample info
+  perl misc/filterBlastResultsByTaxaSelectAbund.pl --minIdent 70 --minLen 100 --minCount 10 --targetTaxa misc/primerTargets/${primer}.txt --blast output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesConcatenated_${primer}.txt | perl -pe 's/:\|.+?\t/:\t/' > tempBlastSubset.txt
+  
+  
+  #cut primer/sample name out of fasta
+  cat output2/blast/inputFiles/merged_products_${primer}.Unique.filtered.fa | perl -pe 's/\|.+//' > tempBlastInputs.fasta
+  
+  # get sequences for on-target blast results
+  perl ../sixthHbMvcCpDb/misc/outputFastaFromResults.pl --fasta tempBlastInputs.fasta --blast tempBlastSubset.txt | perl -pe 's/.fastq.gz//g' > tempBlastSequences.fasta
+  
+  # put species name in fasta
+  cut -f 2,3 output2/primerTree/taxonomy/${primer}_taxonomyFixed.txt > tempSwitchFile.txt
+  
+  # switch: old\tnew
+  perl ~/SerreDLab-3/cannonm3/scripts/switchFastaHeader.pl --fasta output2/primerTree/seqs/${primer}_sequences.fasta --switch tempSwitchFile.txt > tempSpeciesNames.fasta
+  
+  perl ~/SerreDLab-3/cannonm3/scripts/uniqueFastaByHeaderAndSeq.pl tempSpeciesNames.fasta > tempUniqueSpeciesNames.fasta
+  
+  cat tempBlastSequences.fasta tempUniqueSpeciesNames.fasta > tempCombined.fasta
+  
+  mafft --auto --thread 10 --adjustdirection tempCombined.fasta > ${primer}CombinedAligned.fasta
+done
+
+```
+
+
+We changed where the input files were stored part way through this project, so I had to alter in this file
+
+perl -pe 's/\/home\/matthewcannon\/SerreDLab-3\//\/local\/projects-t4\/aberdeen2ro\/SerreDLab-4\//' misc/inputFiles.txt > misc/inputFiles2.txt
+```{bash countStuff, eval = FALSE}
+parallel -j 5 'zgrep -cH "^+$" {} >> output2/counts/rawReadCounts.txt' :::: misc/inputFiles2.txt
+# sum: 
+ 
+zgrep -cH "^+$" output2/pandaseqd/*.fastq.gz | perl -pe 's/:/\t/' > output2/counts/pandaSeqdCounts.txt
+# sum: 
+
+
+# primers removed counts: 
+
+zcat output2/blast/mergedRaw/merged_products_*names.gz | cut -f 2,2 | perl -pe 's/,/\n/g' | wc -l
+# 12,448,531
+
+cat output2/blast/inputFiles/merged_products_*.Filtered.names | cut -f 2,2 | perl -pe 's/,/\n/g' | wc -l
+# 6,796,105
+
+```
+
+
+```{bash countingStuff2, eval = FALSE}
+## Count number of reads per primer
+zgrep -c ">" output2/blast/mergedRaw/*.fa.gz | perl -pe 's/.+merged_products_//' | perl -pe 's/.fa.gz:/\t/' > output2/counts/originalPrimerCounts.txt &
+
+## Count unique sequences
+zgrep -c ">" output2/blast/mergedRaw/*.unique.fasta.gz | perl -pe 's/.+merged_products_//' | perl -pe 's/.unique.fasta.gz:/\t/' > output2/counts/uniquePrimerCounts.txt &
+
+## Count sequences represented by filtered unique sequences
+rm output2/counts/seqsInFilteredUniquePrimers.txt
+for inFile in output2/blast/inputFiles/merged_products_*Filtered.names
+do
+  echo -n "${inFile} " | perl -pe 's/.+merged_products_//' | perl -pe 's/.Filtered.names//' >> output2/counts/seqsInFilteredUniquePrimers.txt
+  cut -f 2,2 ${inFile} | perl -pe 's/,/\n/g' | wc -l >> output2/counts/seqsInFilteredUniquePrimers.txt
+done
+
+```
+
+```{r plotCounts, eval = FALSE}
+originalPrimerCounts <- read.table("output2/counts/originalPrimerCounts.txt", quote="\"", comment.char="")
+
+colnames(originalPrimerCounts) <- c("Primer", "OriginalCounts")
+
+uniquePrimerCounts <- read.table("output2/counts/uniquePrimerCounts.txt", quote="\"", comment.char="")
+
+colnames(uniquePrimerCounts) <- c("Primer", "UniqueSeqs")
+
+
+seqsInFilteredUniquePrimers <- read.table("output2/counts/seqsInFilteredUniquePrimers.txt", quote="\"", comment.char="")
+
+colnames(seqsInFilteredUniquePrimers) <- c("Primer", "SeqsInUniqueFiltered")
+
+combinedDf <- merge(originalPrimerCounts, uniquePrimerCounts)
+combinedDf <- merge(combinedDf, seqsInFilteredUniquePrimers)
+
+combinedDf$proportionKept <- combinedDf$SeqsInUniqueFiltered / combinedDf$OriginalCounts
+
+ggplot(combinedDf, aes(x = OriginalCounts, y = UniqueSeqs)) + geom_point()
+
+
+
+ggplot(combinedDf, aes(x = OriginalCounts, y = SeqsInUniqueFiltered)) + 
+  geom_point() +
+  scale_y_log10() +
+  scale_x_log10() +
+  geom_abline(slope = 1, intercept = 0)
+
+```
+
+
+```{r reformDataToTable, eval = FALSE}
+dataDf <- read.delim("output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers_NewSampleNames.txt")
+
+dataDf <- subset(dataDf, count >= 10 & maxIdent >= 70)
+
+dataDf <- subset(dataDf, Primer == "Apicomp18S_365-613" |
+                         Primer == "Eimeriorina18S_302-730" |
+                         Primer == "FlaviallS_FlaviallAS2" |
+                         Primer == "Kineto_18S4" |
+                         Primer == "Microsporidia_18S" |
+                         Primer == "Parab18S_288-654" |
+                         Primer == "Plasmo18S_883-1126" |
+                         Primer == "Platy_18S3" |
+                         Primer == "Spirur18S_1435-1858" |
+                         Primer == "Spirurida_18S2" |
+                         Primer == "Tricho_18S2" )
+
+dataDf <- dataDf[grep("water", dataDf$Sample, invert = T),]
+dataDf <- dataDf[grep("Positive", dataDf$Sample, invert = T),]
+dataDf <- dataDf[grep("H20", dataDf$Sample, invert = T),]
+dataDf <- dataDf[grep("neg-ctrl", dataDf$Sample, invert = T),]
+
+dataDf$Group <- gsub("[-_].+", "", dataDf$Sample)
+dataDf$Group <- gsub("DB", "MaryLand Mosquito Pools", dataDf$Group)
+dataDf$Group <- gsub("DNA", "African Mosquitoes", dataDf$Group)
+dataDf$Group <- gsub("Further", "Cambodian Mosquitoes", dataDf$Group)
+dataDf$Group <- gsub("St", "Cambodian Mosquitoes", dataDf$Group)
+
+
+dataDfSummary <- dataDf %>% 
+  select(-Sample, -maxAlignLen, -minSeqLength) %>% 
+  mutate(., Hit = 1) %>% 
+  mutate_if(., is.factor, fct_explicit_na, na_level = "ND") %>%
+  group_by(., Group, Primer, species, kingdom, phylum, class, order, family, maxIdent) %>%
+  summarise(NumberPos = sum(Hit)) %>%
+  ungroup(.,) %>%
+  spread(Group, NumberPos) %>%
+  replace(., is.na(.), "0") 
+  
+write.table(dataDfSummary, "speciesBySampleTypeTable.txt", quote = F, sep = "\t", row.names = F, col.names = T)
+
+
+```
+
+
+
+
+```{bash genusTable, eval = FALSE}
+perl misc/createGenusTable.pl --sample misc/sampleData.txt --data output2/blast/output/blastStatsWithTaxaOutputUniqueSpeciesFullNameConcatenatedSummary_OnTarget_AllPrimers.txt | sort -k1,2 > genusTable2.txt
+
+```
+
