@@ -646,6 +646,11 @@ png(filename = "cmpDnaCdnaTheileriaVsPlasmo.png", width = 3000, height = 6000, r
 grid.arrange(P1, P2, P3, P4, P5, ncol = 1)
 dev.off()
 
+png(filename = "cmpDnaCdnaTheileriaVsPlasmo2.png", width = 3000, height = 4000, res = 300)
+grid.arrange(P1, P2, ncol = 1)
+dev.off()
+
+
 castDf$genus <- gsub(" .+", "", castDf$species)
 
 testDdply <- castDf %>%
